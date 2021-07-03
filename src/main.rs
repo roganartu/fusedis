@@ -2,6 +2,7 @@ use fuser::{
     FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry,
     Request,
 };
+use human_panic::setup_panic;
 use libc::ENOENT;
 use std::ffi::OsStr;
 use std::time::{Duration, UNIX_EPOCH};
@@ -114,6 +115,7 @@ impl Filesystem for HelloFS {
 }
 
 fn main() {
+    setup_panic!();
     let matches = App::new("hello")
         .version(crate_version!())
         .author("Christopher Berner")
