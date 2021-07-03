@@ -6,9 +6,14 @@ use structopt::clap::{crate_version, App, Arg};
 
 fn main() {
     setup_panic!();
-    let matches = App::new("hello")
+    // TODO add some more options:
+    //   - config file path
+    //   - redis url(s)
+    //   - sentinel mode
+    //   - read-only mode
+    let matches = App::new("fusedis")
         .version(crate_version!())
-        .author("Christopher Berner")
+        .author("Tony Lykke")
         .arg(
             Arg::with_name("MOUNT_POINT")
                 .required(true)
