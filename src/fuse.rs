@@ -1,3 +1,4 @@
+use crate::config::Config;
 use fuser::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry, Request,
 };
@@ -45,9 +46,11 @@ const HELLO_TXT_ATTR: FileAttr = FileAttr {
     blksize: 512,
 };
 
-pub struct HelloFS;
+pub struct KVFS {
+    pub config: Config,
+}
 
-impl Filesystem for HelloFS {
+impl Filesystem for KVFS {
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         if parent == 1 && name.to_str() == Some("hello.txt") {
             reply.entry(&TTL, &HELLO_TXT_ATTR, 0);

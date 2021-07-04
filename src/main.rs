@@ -97,7 +97,7 @@ fn main() {
     }
     // TODO handle --no-raw
     // TODO define some fields on the KVFS and unwrap them from config
-    fuser::mount2(fuse::HelloFS, mountpoint, &fuse_options).unwrap();
+    fuser::mount2(fuse::KVFS { config: config }, mountpoint, &fuse_options).unwrap();
 }
 
 // Merge cli options with config file options.
