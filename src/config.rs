@@ -22,7 +22,7 @@ pub struct ConfigFile {
     pub chmod: Option<u16>,
 }
 
-#[derive(Debug, Validate, Default)]
+#[derive(Debug, Validate, Default, Clone)]
 pub struct Config {
     pub server: Vec<RedisServer>,
     pub permission: Vec<PathPermission>,
@@ -39,7 +39,7 @@ pub struct Config {
     pub chmod: u16,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct RedisServer {
     // TODO add validation function that verifies:
     //   - scheme is either redis or rediss
@@ -48,7 +48,7 @@ pub struct RedisServer {
     pub url: url::Url,
 }
 
-#[derive(Debug, Validate, Deserialize)]
+#[derive(Debug, Validate, Deserialize, Clone)]
 pub struct PathPermission {
     pub pattern: String,
     // TODO validate that at least one of user, group, or chmod is provided.

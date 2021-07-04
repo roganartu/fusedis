@@ -65,7 +65,7 @@ fn main() {
     //   - sentinel mode
     let opt = Opt::from_args();
     let mountpoint = opt.mount.clone();
-    let config = match merge_config(opt) {
+    let mut config = match merge_config(opt) {
         Ok(config) => config,
         Err(e) => panic!("{}", e),
     };
@@ -91,13 +91,18 @@ fn main() {
     }
     if config.read_only {
         fuse_options.push(MountOption::RO);
-        // TODO set --no-raw
+        config.disable_raw = true;
     } else {
         fuse_options.push(MountOption::RW);
     }
-    // TODO handle --no-raw
-    // TODO define some fields on the KVFS and unwrap them from config
-    fuser::mount2(fuse::KVFS { config: config }, mountpoint, &fuse_options).unwrap();
+    fuser::mount2(
+        fuse::KVFS {
+            config: config.clone(),
+        },
+        mountpoint,
+        &fuse_options,
+    )
+    .unwrap();
 }
 
 // Merge cli options with config file options.
@@ -115,7 +120,9 @@ fn merge_config(opt: Opt) -> Result<config::Config, config::ConfigError> {
             Some(optval) => vec![config::RedisServer { url: optval }],
             None => match cfgfile.server {
                 Some(cfgval) => cfgval,
-                None => vec![],
+                None => vec![config::RedisServer {
+                    url: url::Url::parse("redis://127.0.0.1:6379").unwrap(),
+                }],
             },
         },
         permission: match cfgfile.permission {
