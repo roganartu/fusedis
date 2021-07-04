@@ -59,7 +59,13 @@ fn main() {
     //   - redis url(s)
     //   - sentinel mode
     let opt = Opt::from_args();
-    // TODO load config from opt
+    if opt.config.is_some() {
+        let cfg = config::load_file(opt.config.unwrap());
+        match cfg {
+            Ok(cfg) => println!("{:?}", cfg),
+            Err(e) => println!("{:?}", e),
+        }
+    }
     env_logger::init();
     let mut fuse_options = vec![
         MountOption::FSName("fusedis".to_string()),
