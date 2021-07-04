@@ -59,6 +59,7 @@ fn main() {
     //   - redis url(s)
     //   - sentinel mode
     let opt = Opt::from_args();
+    // TODO merge cli with config
     if opt.config.is_some() {
         let cfg = config::load_file(opt.config.unwrap());
         match cfg {

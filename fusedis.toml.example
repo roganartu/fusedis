@@ -1,2 +1,49 @@
+# Set to true to disable creation of the /raw path for submitting raw Redis commands.
+disable_raw = false
+
+# Set to true to mount fusedis as read-only.
+# If this is set to true, all permissions stanzas below are ignored.
+read_only = false
+
+# Set to true to pass the allow_other option to FUSE.
+# Requires the process either be run as root, or that user_allow_other is
+# set in /etc/fuse.conf.
+allow_other = false
+
+# User to mount fusedis as.
+# Defaults to the user that runs fusedis.
+# See the [[permission]] section below for how to override this setting for
+# individual paths.
+# user = foo
+
+# Group to mount fusedis as.
+# Defaults to the user that runs fusedis.
+# See the [[permission]] section below for how to override this setting for
+# individual paths.
+# group = foo
+
+# Permissions to set all fusedis paths to.
+# See the [[permission]] section below for how to override this setting for
+# individual paths.
+# The default is to allow reading/writing by the mounting user, and read access for
+# everyone else.
+chmod = 0o664
+
 [[server]]
+# Redis URL to use.
+# Supports TLS via the "rediss" scheme.
 url = "redis://127.0.0.1:6379"
+
+# This stanza is repeatable to use sentinel mode.
+# [[server]]
+# url = "redis://127.0.0.1:6380"
+
+# Set permissions on particular paths.
+# Matched against paths from top-to-bottom in this file.
+# pattern supports regex.
+# [[permission]]
+# # Only allow root to send raw redis commands.
+# pattern = "/raw.*"
+# user = "root"
+# group = "root"
+# chmod = 0o600

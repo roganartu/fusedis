@@ -5,10 +5,21 @@ use std::path::PathBuf;
 use toml;
 use validator::Validate;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Validate, Deserialize)]
 pub struct Config {
     server: Option<Vec<RedisServer>>,
     permission: Option<Vec<PathPermission>>,
+    disable_raw: Option<bool>,
+    read_only: Option<bool>,
+    allow_other: Option<bool>,
+    user: Option<String>,
+    group: Option<String>,
+    #[validate(range(
+        min = 0o000,
+        max = 0o777,
+        message = "Value must be between 000 and 777 (octal)"
+    ))]
+    chmod: Option<u16>,
 }
 
 #[derive(Debug, Deserialize)]
