@@ -55,6 +55,10 @@ struct Opt {
     /// Permissions to give all paths under mount. Must be octal. Use config file for finer-grained, path-based control [default: 644]
     #[structopt(long, parse(try_from_str = config::parse_octal))]
     chmod: Option<u16>,
+
+    /// Maximum number of keys to return to readdir. Set to -1 to disable [default: 1000]
+    #[structopt(short, long)]
+    max_results: Option<i64>,
 }
 
 fn main() {
@@ -166,6 +170,13 @@ fn merge_config(opt: Opt) -> Result<config::Config, config::ConfigError> {
             None => match cfgfile.chmod {
                 Some(cfgval) => cfgval,
                 None => 0o644,
+            },
+        },
+        max_results: match opt.max_results {
+            Some(optval) => optval,
+            None => match cfgfile.max_results {
+                Some(cfgval) => cfgval,
+                None => 1000,
             },
         },
     };

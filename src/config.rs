@@ -20,6 +20,7 @@ pub struct ConfigFile {
         message = "Value must be between 000 and 777 (octal)"
     ))]
     pub chmod: Option<u16>,
+    pub max_results: Option<i64>,
 }
 
 #[derive(Debug, Validate, Default, Clone)]
@@ -37,6 +38,7 @@ pub struct Config {
         message = "Value must be between 000 and 777 (octal)"
     ))]
     pub chmod: u16,
+    pub max_results: i64,
 }
 
 #[derive(Debug, Deserialize, Clone)]

@@ -29,6 +29,12 @@ allow_other = false
 # everyone else.
 chmod = 0o664
 
+# Maximum number of keys to return to readdir.
+# This prevents listing contents of /kv from taking excessively-long with large databases.
+# You can control this limit via path config, eg:
+#   /kv:limit=-1
+max_results = 1000
+
 [[server]]
 # Redis URL to use.
 # Supports TLS via the "rediss" scheme.
