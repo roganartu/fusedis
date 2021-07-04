@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::fmt;
 use std::fs;
 use std::num::ParseIntError;
 use std::path::PathBuf;
@@ -7,6 +8,7 @@ use validator::Validate;
 
 #[derive(Debug, Validate, Deserialize, Default)]
 pub struct ConfigFile {
+    pub cluster_mode: Option<bool>,
     pub server: Option<Vec<RedisServer>>,
     pub permission: Option<Vec<PathPermission>>,
     pub disable_raw: Option<bool>,
@@ -21,10 +23,12 @@ pub struct ConfigFile {
     ))]
     pub chmod: Option<u16>,
     pub max_results: Option<i64>,
+    // TODO allow configuring r2d2 connection pooling
 }
 
 #[derive(Debug, Validate, Default, Clone)]
 pub struct Config {
+    pub cluster_mode: bool,
     pub server: Vec<RedisServer>,
     pub permission: Vec<PathPermission>,
     pub disable_raw: bool,
@@ -43,11 +47,14 @@ pub struct Config {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct RedisServer {
-    // TODO add validation function that verifies:
-    //   - scheme is either redis or rediss
-    //   - host exists
-    //   - port exists
+    // TODO validate with https://docs.rs/redis/0.20.2/redis/fn.parse_redis_url.html
     pub url: url::Url,
+}
+
+impl fmt::Display for RedisServer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.url.to_string())
+    }
 }
 
 #[derive(Debug, Validate, Deserialize, Clone)]
@@ -82,6 +89,9 @@ quick_error! {
     pub enum ConfigError {
         Io(err: std::io::Error) {
             source(err)
+        }
+        MultipleServersNotClustered {
+            display("Multiple Redis servers configured, but cluster mode not enabled.")
         }
     }
 }

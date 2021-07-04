@@ -3,6 +3,8 @@ use fuser::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry, Request,
 };
 use libc::ENOENT;
+use r2d2_redis::RedisConnectionManager;
+use r2d2_redis_cluster::{r2d2, RedisClusterConnectionManager};
 use std::ffi::OsStr;
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -46,8 +48,12 @@ const HELLO_TXT_ATTR: FileAttr = FileAttr {
     blksize: 512,
 };
 
+#[derive(Debug, Clone)]
 pub struct KVFS {
     pub config: Config,
+    // TODO these both impl r2d2::ManageConnection, surely we don't need two attrs?
+    pub pool: Option<r2d2::Pool<RedisConnectionManager>>,
+    pub cluster_pool: Option<r2d2::Pool<RedisClusterConnectionManager>>,
 }
 
 impl Filesystem for KVFS {

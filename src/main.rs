@@ -10,6 +10,8 @@ extern crate url;
 use env_logger::Env;
 use fuser::MountOption;
 use human_panic::setup_panic;
+use r2d2_redis::{r2d2, RedisConnectionManager};
+use r2d2_redis_cluster::RedisClusterConnectionManager;
 use std::error;
 use std::path::PathBuf;
 use std::process;
@@ -47,6 +49,10 @@ struct Opt {
     /// Redis server(s) to connect to [default: redis://127.0.0.1:6379]
     #[structopt(short, long)]
     server: Option<url::Url>,
+
+    /// Enable Redis cluster mode
+    #[structopt(long)]
+    cluster_mode: bool,
 
     /// Mount fusekv in read-only mode. Implies --no-raw
     #[structopt(long)]
@@ -100,6 +106,8 @@ fn run_app() -> CLIResult<()> {
         Err(e) => return Err(Box::new(e)),
     };
     log::debug!("Final loaded config: {:?}.", config);
+
+    // Setup fuse options
     let mut fuse_options = vec![
         MountOption::FSName("fusekv".to_string()),
         MountOption::AutoUnmount,
@@ -129,14 +137,49 @@ fn run_app() -> CLIResult<()> {
         log::info!("Mounting in read-write mode.");
         fuse_options.push(MountOption::RW);
     }
+
+    let mut kvfs = fuse::KVFS {
+        config: config.clone(),
+        pool: None,
+        cluster_pool: None,
+    };
+
+    // Connect to redis
+    let redis_urls: Vec<String> = config.server.iter().map(|u| u.to_string()).collect();
+    if config.cluster_mode {
+        log::debug!(
+            "Attempting to connect to redis URLs in cluster mode {:?}.",
+            redis_urls
+        );
+        let redis_conn_manager = match RedisClusterConnectionManager::new(
+            redis_urls.iter().map(|s| s.as_str()).collect(),
+        ) {
+            Ok(v) => v,
+            Err(e) => return Err(Box::new(e)),
+        };
+        kvfs.cluster_pool = match r2d2::Pool::builder().build(redis_conn_manager) {
+            Ok(v) => Some(v),
+            Err(e) => return Err(Box::new(e)),
+        };
+    } else {
+        if redis_urls.len() > 1 {
+            return Err(Box::new(config::ConfigError::MultipleServersNotClustered));
+        }
+        let redis_url = redis_urls[0].clone();
+        log::debug!("Attempting to connect to redis URL {}.", redis_url);
+        let redis_conn_manager = match RedisConnectionManager::new(redis_url) {
+            Ok(v) => v,
+            Err(e) => return Err(Box::new(e)),
+        };
+        kvfs.pool = match r2d2::Pool::builder().build(redis_conn_manager) {
+            Ok(v) => Some(v),
+            Err(e) => return Err(Box::new(e)),
+        };
+    }
+
+    // Mount the filestystem
     log::info!("Mounting fusekv at {}.", mountpoint.display());
-    match fuser::mount2(
-        fuse::KVFS {
-            config: config.clone(),
-        },
-        mountpoint,
-        &fuse_options,
-    ) {
+    match fuser::mount2(kvfs.clone(), mountpoint, &fuse_options) {
         Ok(v) => Ok(v),
         Err(e) => Err(Box::new(e)),
     }
@@ -156,6 +199,11 @@ fn merge_config(opt: Opt) -> Result<config::Config, config::ConfigError> {
         None => config::ConfigFile::default(),
     };
     let cfg = config::Config {
+        cluster_mode: opt.cluster_mode
+            || match cfgfile.cluster_mode {
+                Some(cfgval) => cfgval,
+                None => false,
+            },
         server: match opt.server {
             Some(optval) => vec![config::RedisServer { url: optval }],
             None => match cfgfile.server {
