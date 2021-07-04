@@ -1,5 +1,5 @@
 # fusekv
-FUSE KV store backed by Redis.
+FUSE key/value store backed by Redis.
 
 # Building
 

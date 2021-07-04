@@ -1,5 +1,6 @@
 [package]
 name = "fusekv"
+description = "FUSE key/value store backed by Redis"
 version = "0.1.0"
 homepage = "https://github.com/roganartu/fusekv"
 authors = ["Tony Lykke <hi@tonylykke.com>"]

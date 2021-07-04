@@ -15,7 +15,7 @@ use whoami::username;
 #[derive(Debug, StructOpt)]
 #[structopt(
     name = "fusekv",
-    about = "FUSE KV store backed by Redis.",
+    about = "FUSE key/value store backed by Redis.",
     author = "Tony Lykke <hi@tonylykke.com>",
     rename_all = "kebab-case"
 )]
