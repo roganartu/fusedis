@@ -4,13 +4,8 @@ use validator::Validate;
 
 #[derive(Deserialize)]
 struct Config {
-    server: Vec<RedisServer>,
+    server: Vec<url::Url>,
     permission: Vec<PathPermission>,
-}
-
-#[derive(Deserialize)]
-struct RedisServer {
-    url: url::Url,
 }
 
 #[derive(Validate, Deserialize)]

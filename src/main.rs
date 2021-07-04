@@ -1,5 +1,5 @@
 mod config;
-mod fs;
+mod fuse;
 
 #[macro_use]
 extern crate quick_error;
@@ -87,5 +87,5 @@ fn main() {
         fuse_options.push(MountOption::RW);
     }
     // TODO handle --no-raw
-    fuser::mount2(fs::HelloFS, opt.mount, &fuse_options).unwrap();
+    fuser::mount2(fuse::HelloFS, opt.mount, &fuse_options).unwrap();
 }
