@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use std::num::ParseIntError;
+use validator::Validate;
 
 #[derive(Deserialize)]
 struct Config {
@@ -12,11 +13,15 @@ struct RedisServer {
     url: url::Url,
 }
 
-#[derive(Deserialize)]
+#[derive(Validate, Deserialize)]
 struct PathPermission {
     user: Option<String>,
     group: Option<String>,
-    // TODO figure out how to use parse_octal with this
+    #[validate(range(
+        min = 0o000,
+        max = 0o777,
+        message = "Value must be between 000 and 777 (octal)"
+    ))]
     chmod: Option<u16>,
 }
 
