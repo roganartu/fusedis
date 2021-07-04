@@ -1,25 +1,15 @@
+mod config;
 mod fs;
+
+#[macro_use]
+extern crate quick_error;
+extern crate toml;
+extern crate url;
 
 use fuser::MountOption;
 use human_panic::setup_panic;
-use std::num::ParseIntError;
 use std::path::PathBuf;
 use structopt::StructOpt;
-#[macro_use]
-extern crate quick_error;
-
-quick_error! {
-    #[derive(Debug)]
-    pub enum PermissionParsingError {
-        BadValue(err: ParseIntError) {
-            source(err)
-            display("Error parsing permission string: {}. Value must be between 000 and 777 (octal)", err)
-        }
-        OutOfRange {
-            display("Value must be between 000 and 777 (octal)")
-        }
-    }
-}
 
 #[derive(Debug, StructOpt)]
 #[structopt(
@@ -58,7 +48,7 @@ struct Opt {
     group: Option<String>,
 
     /// Permissions to give all paths under mount. Must be octal. Use config file for finer-grained control.
-    #[structopt(long, parse(try_from_str = parse_octal))]
+    #[structopt(long, parse(try_from_str = config::parse_octal))]
     chmod: Option<u16>,
 }
 
@@ -98,14 +88,4 @@ fn main() {
     }
     // TODO handle --no-raw
     fuser::mount2(fs::HelloFS, opt.mount, &fuse_options).unwrap();
-}
-
-fn parse_octal(src: &str) -> Result<u16, PermissionParsingError> {
-    match u16::from_str_radix(src, 8) {
-        Ok(parsed) => match parsed {
-            0o000..=0o777 => Ok(parsed),
-            _ => Err(PermissionParsingError::OutOfRange),
-        },
-        Err(e) => Err(PermissionParsingError::BadValue(e)),
-    }
 }

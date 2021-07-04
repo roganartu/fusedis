@@ -16,3 +16,4 @@ redis = { version = "0.20.1", features = ["cluster", "tls"] }
 toml = "0.5"
 url = { version = "2.2", features = ["serde"] }
 quick-error = "2.0"
+serde = { version = "1.0", features = ["derive"] }
