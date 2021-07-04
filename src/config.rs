@@ -5,21 +5,38 @@ use std::path::PathBuf;
 use toml;
 use validator::Validate;
 
-#[derive(Debug, Validate, Deserialize)]
-pub struct Config {
-    server: Option<Vec<RedisServer>>,
-    permission: Option<Vec<PathPermission>>,
-    disable_raw: Option<bool>,
-    read_only: Option<bool>,
-    allow_other: Option<bool>,
-    user: Option<String>,
-    group: Option<String>,
+#[derive(Debug, Validate, Deserialize, Default)]
+pub struct ConfigFile {
+    pub server: Option<Vec<RedisServer>>,
+    pub permission: Option<Vec<PathPermission>>,
+    pub disable_raw: Option<bool>,
+    pub read_only: Option<bool>,
+    pub allow_other: Option<bool>,
+    pub user: Option<String>,
+    pub group: Option<String>,
     #[validate(range(
         min = 0o000,
         max = 0o777,
         message = "Value must be between 000 and 777 (octal)"
     ))]
-    chmod: Option<u16>,
+    pub chmod: Option<u16>,
+}
+
+#[derive(Debug, Validate, Default)]
+pub struct Config {
+    pub server: Vec<RedisServer>,
+    pub permission: Vec<PathPermission>,
+    pub disable_raw: bool,
+    pub read_only: bool,
+    pub allow_other: bool,
+    pub user: String,
+    pub group: String,
+    #[validate(range(
+        min = 0o000,
+        max = 0o777,
+        message = "Value must be between 000 and 777 (octal)"
+    ))]
+    pub chmod: u16,
 }
 
 #[derive(Debug, Deserialize)]
@@ -28,19 +45,21 @@ pub struct RedisServer {
     //   - scheme is either redis or rediss
     //   - host exists
     //   - port exists
-    url: url::Url,
+    pub url: url::Url,
 }
 
 #[derive(Debug, Validate, Deserialize)]
 pub struct PathPermission {
-    user: Option<String>,
-    group: Option<String>,
+    pub pattern: String,
+    // TODO validate that at least one of user, group, or chmod is provided.
+    pub user: Option<String>,
+    pub group: Option<String>,
     #[validate(range(
         min = 0o000,
         max = 0o777,
         message = "Value must be between 000 and 777 (octal)"
     ))]
-    chmod: Option<u16>,
+    pub chmod: Option<u16>,
 }
 
 quick_error! {
@@ -75,11 +94,11 @@ pub fn parse_octal(src: &str) -> Result<u16, PermissionParsingError> {
     }
 }
 
-pub fn load_file(src: PathBuf) -> Result<Config, ConfigError> {
+pub fn load_file(src: PathBuf) -> Result<ConfigFile, ConfigError> {
     let f = match fs::read_to_string(src) {
         Ok(f) => f,
         Err(e) => return Err(ConfigError::Io(e)),
     };
-    let config: Config = toml::from_str(&f).unwrap();
+    let config: ConfigFile = toml::from_str(&f).unwrap();
     Ok(config)
 }
