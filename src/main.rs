@@ -3,16 +3,32 @@ mod fuse;
 
 #[macro_use]
 extern crate quick_error;
+extern crate log;
 extern crate toml;
 extern crate url;
 
+use env_logger::Env;
 use fuser::MountOption;
 use human_panic::setup_panic;
+use std::error;
 use std::path::PathBuf;
+use std::process;
+use structopt::clap::arg_enum;
 use structopt::StructOpt;
 use whoami::username;
 
-#[derive(Debug, StructOpt)]
+type CLIResult<T> = std::result::Result<T, Box<dyn error::Error>>;
+
+arg_enum! {
+    #[derive(Debug, Clone)]
+    enum LogLevel {
+        Debug,
+        Info,
+        Error,
+    }
+}
+
+#[derive(Debug, StructOpt, Clone)]
 #[structopt(
     name = "fusekv",
     about = "FUSE key/value store backed by Redis.",
@@ -63,17 +79,27 @@ struct Opt {
 
 fn main() {
     setup_panic!();
-    // TODO add some more options:
-    //   - config file path
-    //   - redis url(s)
-    //   - sentinel mode
+    process::exit(match run_app() {
+        Ok(_) => 0,
+        Err(err) => {
+            eprintln!("error: {:?}", err);
+            1
+        }
+    });
+}
+
+fn run_app() -> CLIResult<()> {
+    let env = Env::default().filter_or("FUSEKV_LOG_LEVEL", "info");
+    env_logger::init_from_env(env);
+    log::debug!("Parsing CLI args.");
     let opt = Opt::from_args();
+    log::debug!("Parsed {:?} from CLI.", opt);
     let mountpoint = opt.mount.clone();
     let mut config = match merge_config(opt) {
         Ok(config) => config,
-        Err(e) => panic!("{}", e),
+        Err(e) => return Err(Box::new(e)),
     };
-    env_logger::init();
+    log::debug!("Final loaded config: {:?}.", config);
     let mut fuse_options = vec![
         MountOption::FSName("fusekv".to_string()),
         MountOption::AutoUnmount,
@@ -91,32 +117,42 @@ fn main() {
         MountOption::NoAtime,
     ];
     if config.allow_other {
+        log::info!("Setting allow_other mount option.");
         fuse_options.push(MountOption::AllowOther);
     }
     if config.read_only {
+        log::info!("Mounting in read-only mode.");
         fuse_options.push(MountOption::RO);
+        log::info!("Disabling raw command support due to read-only mode.");
         config.disable_raw = true;
     } else {
+        log::info!("Mounting in read-write mode.");
         fuse_options.push(MountOption::RW);
     }
-    fuser::mount2(
+    log::info!("Mounting fusekv at {}.", mountpoint.display());
+    match fuser::mount2(
         fuse::KVFS {
             config: config.clone(),
         },
         mountpoint,
         &fuse_options,
-    )
-    .unwrap();
+    ) {
+        Ok(v) => Ok(v),
+        Err(e) => Err(Box::new(e)),
+    }
 }
 
 // Merge cli options with config file options.
 // CLI options take precedence.
 fn merge_config(opt: Opt) -> Result<config::Config, config::ConfigError> {
     let cfgfile = match opt.config {
-        Some(config_file) => match config::load_file(config_file) {
-            Ok(cfg) => cfg,
-            Err(e) => return Err(e),
-        },
+        Some(config_file) => {
+            log::debug!("Reading config from {}.", config_file.display());
+            match config::load_file(config_file) {
+                Ok(cfg) => cfg,
+                Err(e) => return Err(e),
+            }
+        }
         None => config::ConfigFile::default(),
     };
     let cfg = config::Config {
@@ -180,6 +216,5 @@ fn merge_config(opt: Opt) -> Result<config::Config, config::ConfigError> {
             },
         },
     };
-    println!("{:?}", cfg);
     Ok(cfg)
 }

@@ -11,6 +11,7 @@ fuser = "0.8"
 quicli = "0.4"
 structopt = "0.3"
 libc = "0.2"
+log = "0.4"
 env_logger = "0.8"
 human-panic = "1.0.3"
 redis = { version = "0.20.1", features = ["cluster", "tls"] }
