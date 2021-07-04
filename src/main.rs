@@ -15,7 +15,7 @@ use structopt::StructOpt;
 #[structopt(
     name = "fusedis",
     about = "Redis KV store via FUSE.",
-    author = "Tony Lykke",
+    author = "Tony Lykke <hi@tonylykke.com>",
     rename_all = "kebab-case"
 )]
 struct Opt {
