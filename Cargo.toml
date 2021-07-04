@@ -8,8 +8,11 @@ edition = "2018"
 [dependencies]
 fuser = "0.8"
 quicli = "0.4"
-structopt = "0.2"
+structopt = "0.3"
 libc = "0.2"
 env_logger = "0.8"
 human-panic = "1.0.3"
 redis = { version = "0.20.1", features = ["cluster", "tls"] }
+toml = "0.5"
+url = { version = "2.2", features = ["serde"] }
+quick-error = "2.0"
