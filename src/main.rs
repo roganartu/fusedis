@@ -12,12 +12,14 @@ use fuser::MountOption;
 use human_panic::setup_panic;
 use r2d2_redis::{r2d2, RedisConnectionManager};
 use r2d2_redis_cluster::RedisClusterConnectionManager;
+use std::collections::HashMap;
 use std::error;
 use std::path::PathBuf;
 use std::process;
 use structopt::clap::arg_enum;
 use structopt::StructOpt;
-use whoami::username;
+use users;
+use whoami;
 
 type CLIResult<T> = std::result::Result<T, Box<dyn error::Error>>;
 
@@ -142,6 +144,8 @@ fn run_app() -> CLIResult<()> {
         config: config.clone(),
         pool: None,
         cluster_pool: None,
+        direntries_by_group: HashMap::new(),
+        direntries_by_parent_ino: HashMap::new(),
     };
 
     // Connect to redis
@@ -176,6 +180,9 @@ fn run_app() -> CLIResult<()> {
             Err(e) => return Err(Box::new(e)),
         };
     }
+
+    log::debug!("Building directory structure.");
+    kvfs.init_static_dirs();
 
     // Mount the filestystem
     log::info!("Mounting fusekv at {}.", mountpoint.display());
@@ -233,20 +240,29 @@ fn merge_config(opt: Opt) -> Result<config::Config, config::ConfigError> {
                 None => false,
             },
         // Defaults to the current user
-        user: match opt.user {
+        uid: match users::get_user_by_name(&match opt.user {
             Some(optval) => optval,
             None => match cfgfile.user {
                 Some(cfgval) => cfgval,
                 None => whoami::username(),
             },
+        }) {
+            Some(v) => v.uid(),
+            None => return Err(config::ConfigError::UserNotFound),
         },
         // Defaults to the current user
-        group: match opt.group {
+        gid: match users::get_group_by_name(&match opt.group {
             Some(optval) => optval,
             None => match cfgfile.group {
                 Some(cfgval) => cfgval,
-                None => username(),
+                None => match users::get_current_groupname() {
+                    Some(v) => v.into_string().unwrap(),
+                    None => return Err(config::ConfigError::UserNotFound),
+                },
             },
+        }) {
+            Some(v) => v.gid(),
+            None => return Err(config::ConfigError::GroupNotFound),
         },
         // Defaults to read/write by current user.
         chmod: match opt.chmod {

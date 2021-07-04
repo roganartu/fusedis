@@ -34,8 +34,8 @@ pub struct Config {
     pub disable_raw: bool,
     pub read_only: bool,
     pub allow_other: bool,
-    pub user: String,
-    pub group: String,
+    pub uid: u32,
+    pub gid: u32,
     #[validate(range(
         min = 0o000,
         max = 0o777,
@@ -92,6 +92,12 @@ quick_error! {
         }
         MultipleServersNotClustered {
             display("Multiple Redis servers configured, but cluster mode not enabled.")
+        }
+        UserNotFound {
+            display("User not found.")
+        }
+        GroupNotFound {
+            display("Group not found.")
         }
     }
 }
