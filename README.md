@@ -1,10 +1,16 @@
-# fusedis
-Redis via Fuse
+# fusekv
+FUSE KV store backed by Redis.
 
 # Building
-Requires the following packages:
+
+## Prerequisites
 ```
 fuse
 pkg-config
 libfuse-dev
+```
+
+## Building
+```
+$ make build
 ```

@@ -1,7 +1,7 @@
 # Set to true to disable creation of the /raw path for submitting raw Redis commands.
 disable_raw = false
 
-# Set to true to mount fusedis as read-only.
+# Set to true to mount fusekv as read-only.
 # If this is set to true, all permissions stanzas below are ignored.
 read_only = false
 
@@ -10,19 +10,19 @@ read_only = false
 # set in /etc/fuse.conf.
 allow_other = false
 
-# User to mount fusedis as.
-# Defaults to the user that runs fusedis.
+# User to mount fusekv as.
+# Defaults to the user that runs fusekv.
 # See the [[permission]] section below for how to override this setting for
 # individual paths.
 # user = foo
 
-# Group to mount fusedis as.
-# Defaults to the user that runs fusedis.
+# Group to mount fusekv as.
+# Defaults to the user that runs fusekv.
 # See the [[permission]] section below for how to override this setting for
 # individual paths.
 # group = foo
 
-# Permissions to set all fusedis paths to.
+# Permissions to set all fusekv paths to.
 # See the [[permission]] section below for how to override this setting for
 # individual paths.
 # The default is to allow reading/writing by the mounting user, and read access for

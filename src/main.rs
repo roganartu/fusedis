@@ -14,13 +14,13 @@ use whoami::username;
 
 #[derive(Debug, StructOpt)]
 #[structopt(
-    name = "fusedis",
-    about = "Redis KV store via FUSE.",
+    name = "fusekv",
+    about = "FUSE KV store backed by Redis.",
     author = "Tony Lykke <hi@tonylykke.com>",
     rename_all = "kebab-case"
 )]
 struct Opt {
-    /// Path to mount fusedis
+    /// Path to mount fusekv
     #[structopt(parse(from_os_str))]
     mount: PathBuf,
 
@@ -32,7 +32,7 @@ struct Opt {
     #[structopt(short, long)]
     server: Option<url::Url>,
 
-    /// Mount fusedis in read-only mode. Implies --no-raw
+    /// Mount fusekv in read-only mode. Implies --no-raw
     #[structopt(long)]
     read_only: bool,
 
@@ -44,11 +44,11 @@ struct Opt {
     #[structopt(long)]
     allow_other: bool,
 
-    /// User to mount fusedis as. Defaults to current user.
+    /// User to mount fusekv as. Defaults to current user.
     #[structopt(short, long)]
     user: Option<String>,
 
-    /// Group to mount fusedis as. Defaults to current user.
+    /// Group to mount fusekv as. Defaults to current user.
     #[structopt(short, long)]
     group: Option<String>,
 
@@ -71,7 +71,7 @@ fn main() {
     };
     env_logger::init();
     let mut fuse_options = vec![
-        MountOption::FSName("fusedis".to_string()),
+        MountOption::FSName("fusekv".to_string()),
         MountOption::AutoUnmount,
         MountOption::NoExec,
         MountOption::DefaultPermissions,
