@@ -54,6 +54,19 @@ type DirEntry = (u64, FileType, FileAttr, String, Option<String>);
 // ino, type, name
 type ReadDirEntry = (u64, FileType, String);
 
+macro_rules! get_conn_eagain {
+    ($pool:expr, $reply:expr) => {
+        match $pool.clone().unwrap().get() {
+            Ok(c) => c,
+            Err(e) => {
+                log::debug!("Error getting pool connection: {}", e);
+                $reply.error(EAGAIN);
+                return;
+            }
+        }
+    };
+}
+
 #[derive(Debug, Clone)]
 pub struct KVFS {
     pub config: Config,
@@ -88,14 +101,7 @@ impl Filesystem for KVFS {
         // /kv
         } else if parent == 4096 {
             // We have a name, so we can just look directly into redis
-            let mut conn = match self.pool.clone().unwrap().get() {
-                Ok(c) => c,
-                Err(e) => {
-                    log::debug!("Error getting pool connection: {}", e);
-                    reply.error(EAGAIN);
-                    return;
-                }
-            };
+            let mut conn = get_conn_eagain!(self.pool, reply);
             // TODO not sure if this is the best idea, it reads the whole value into
             // memory which might cause problems with large values.
             let value: String = match redis::cmd("GET").arg(&name_str).query(&mut *conn) {
@@ -210,14 +216,7 @@ impl Filesystem for KVFS {
             KV_START..=KV_END => match ino_cache.get(&ino) {
                 Some(name) => {
                     // TODO make this a macro
-                    let mut conn = match self.pool.clone().unwrap().get() {
-                        Ok(c) => c,
-                        Err(e) => {
-                            log::debug!("Error getting pool connection: {}", e);
-                            reply.error(EAGAIN);
-                            return;
-                        }
-                    };
+                    let mut conn = get_conn_eagain!(self.pool, reply);
                     // TODO make this a macro.
                     // Maybe two macros? One for running the command with EAGAIN on failure,
                     // and another for unwrapping None into ENOENT?
