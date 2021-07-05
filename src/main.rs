@@ -3,6 +3,7 @@ mod fuse;
 
 #[macro_use]
 extern crate quick_error;
+extern crate lazy_static;
 extern crate log;
 extern crate toml;
 extern crate url;

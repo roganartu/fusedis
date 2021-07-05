@@ -2,12 +2,16 @@ use crate::config::Config;
 use fuser::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry, Request,
 };
+use lazy_static::lazy_static;
 use libc::{EAGAIN, ENOENT};
+use lru::LruCache;
 use r2d2_redis::RedisConnectionManager;
 use r2d2_redis_cluster::{r2d2, RedisClusterConnectionManager};
+use seahash;
 use std::collections::HashMap;
 use std::error;
 use std::ffi::OsStr;
+use std::sync::RwLock;
 use std::time::{Duration, SystemTime};
 
 const TTL: Duration = Duration::from_secs(1); // 1 second
@@ -15,12 +19,14 @@ const TTL: Duration = Duration::from_secs(1); // 1 second
 // /raw
 const RAW_START: u64 = 2;
 const RAW_END: u64 = 8191;
+
 // /lock/<name>
 const LOCK_START: u64 = 8192;
-const LOCK_END: u64 = 100_000_000_000;
+const LOCK_END: u64 = 100_000_000_000_000;
+
 // /kv/<name>
-const KV_START: u64 = 200_000_000_000;
-const KV_END: u64 = 300_000_000_000;
+const KV_START: u64 = 400_000_000_000_000;
+const KV_END: u64 = 500_000_000_000_000;
 
 const RAW_HELP: &str = "Send raw commands to Redis.
 
@@ -36,6 +42,11 @@ const KV_HELP: &str = "Key/Value store via files.
 
 TODO fill this in with how to use /kv
 ";
+
+// TODO make this size configurable? is that possible?
+lazy_static! {
+    static ref INO_CACHE: RwLock<LruCache<u64, String>> = RwLock::new(LruCache::new(1_000_000));
+}
 
 // ino, type, attr, name, content
 type DirEntry = (u64, FileType, FileAttr, String, Option<String>);
@@ -55,9 +66,11 @@ pub struct KVFS {
 
 impl Filesystem for KVFS {
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
+        log::debug!("lookup {:?} under parent {}", name, parent);
         let name_str = match name.to_os_string().into_string() {
             Ok(v) => v,
-            Err(_) => {
+            Err(e) => {
+                log::debug!("Error turning {:?} into string: {:?}", name, e);
                 reply.error(ENOENT);
                 return;
             }
@@ -72,6 +85,57 @@ impl Filesystem for KVFS {
                 },
                 None => reply.error(ENOENT),
             };
+        // /kv
+        } else if parent == 4096 {
+            // We have a name, so we can just look directly into redis
+            let mut conn = match self.pool.clone().unwrap().get() {
+                Ok(c) => c,
+                Err(e) => {
+                    log::debug!("Error getting pool connection: {}", e);
+                    reply.error(EAGAIN);
+                    return;
+                }
+            };
+            // TODO not sure if this is the best idea, it reads the whole value into
+            // memory which might cause problems with large values.
+            let value: String = match redis::cmd("GET").arg(&name_str).query(&mut *conn) {
+                Ok(v) => match v {
+                    Some(a) => a,
+                    None => {
+                        reply.error(ENOENT);
+                        return;
+                    }
+                },
+                Err(e) => {
+                    log::debug!("Error querying redis: {}", e);
+                    reply.error(EAGAIN);
+                    return;
+                }
+            };
+            // TODO support nested dirs for eg hsets
+            let ino = seahash::hash(name_str.as_bytes()) % (KV_END - KV_START) + KV_START;
+            let attr = self.get_attr(
+                format!("/kv/{}", &name_str).as_str(),
+                FileType::RegularFile,
+                ino,
+                // We add a \n at the end
+                (value.len() + 1) as u64,
+            );
+            let mut ino_cache = match INO_CACHE.write() {
+                Ok(cache) => cache,
+                Err(e) => {
+                    log::error!(
+                        "Failed to acquire write lock on inode cache in getattr for inode {}: {}",
+                        ino,
+                        e
+                    );
+                    reply.error(EAGAIN);
+                    return;
+                }
+            };
+            ino_cache.put(ino, name_str.clone());
+            // We add a \n at the end
+            reply.entry(&TTL, &attr, (value.len() + 1) as u64);
         // TODO add ranges for /lock and /kv here
         } else {
             reply.error(ENOENT);
@@ -79,11 +143,26 @@ impl Filesystem for KVFS {
     }
 
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
+        log::debug!("getattr for {}", ino);
         match ino {
             0..=RAW_END => match self.direntries_by_ino.get(&ino) {
                 Some(v) => reply.attr(&TTL, &v.2),
                 None => reply.error(ENOENT),
             },
+            KV_START..=KV_END => {
+                let mut ino_cache = match INO_CACHE.write() {
+                    Ok(cache) => cache,
+                    Err(e) => {
+                        log::error!("Failed to acquire write lock on inode cache in getattr for inode {}: {}", ino, e);
+                        reply.error(EAGAIN);
+                        return;
+                    }
+                };
+                // TODO construct nested dirs, somehow?
+                println!("{:?}", ino_cache.get(&ino));
+                // TODO if not in cache, fetch everything and find it via hash?
+                reply.error(ENOENT);
+            }
             // TODO add ranges for /lock and /kv here
             _ => reply.error(ENOENT),
         };
@@ -93,13 +172,32 @@ impl Filesystem for KVFS {
         &mut self,
         _req: &Request,
         ino: u64,
-        _fh: u64,
+        fh: u64,
         offset: i64,
         _size: u32,
         _flags: i32,
         _lock: Option<u64>,
         reply: ReplyData,
     ) {
+        log::debug!(
+            "read inode {} at offset {} via filehandle {}",
+            ino,
+            offset,
+            fh,
+        );
+        let mut ino_cache = match INO_CACHE.write() {
+            Ok(cache) => cache,
+            Err(e) => {
+                log::error!(
+                    "Failed to acquire write lock on inode cache in read for inode {} on filehandle {}: {}",
+                    ino,
+                    fh,
+                    e,
+                );
+                reply.error(EAGAIN);
+                return;
+            }
+        };
         match ino {
             // FUSE internal range
             0..=RAW_END => match self.direntries_by_ino.get(&ino) {
@@ -108,6 +206,44 @@ impl Filesystem for KVFS {
                     None => reply.error(ENOENT),
                 },
                 None => reply.error(ENOENT),
+            },
+            KV_START..=KV_END => match ino_cache.get(&ino) {
+                Some(name) => {
+                    // TODO make this a macro
+                    let mut conn = match self.pool.clone().unwrap().get() {
+                        Ok(c) => c,
+                        Err(e) => {
+                            log::debug!("Error getting pool connection: {}", e);
+                            reply.error(EAGAIN);
+                            return;
+                        }
+                    };
+                    // TODO make this a macro.
+                    // Maybe two macros? One for running the command with EAGAIN on failure,
+                    // and another for unwrapping None into ENOENT?
+                    // Then use like this:
+                    //     let value: String = with_enoent!(redis_cmd!(String, &mut *conn, "GET", &name_str))
+                    let value: String = match redis::cmd("GET").arg(name).query(&mut *conn) {
+                        Ok(v) => match v {
+                            Some(a) => a,
+                            None => {
+                                reply.error(ENOENT);
+                                return;
+                            }
+                        },
+                        Err(e) => {
+                            log::debug!("Error querying redis: {}", e);
+                            reply.error(EAGAIN);
+                            return;
+                        }
+                    };
+                    reply.data(&format!("{}\n", value).as_bytes()[offset as usize..]);
+                }
+                None => {
+                    // TODO lookup all keys and find this one by hash?
+                    reply.error(ENOENT);
+                    return;
+                }
             },
             // TODO add ranges for /lock and /kv
             _ => reply.error(ENOENT),
@@ -118,10 +254,11 @@ impl Filesystem for KVFS {
         &mut self,
         _req: &Request,
         ino: u64,
-        _fh: u64,
+        fh: u64,
         offset: i64,
         mut reply: ReplyDirectory,
     ) {
+        log::debug!("readdir for inode {} via filehandle {}", ino, fh);
         let mut entries: Vec<ReadDirEntry> = vec![(1, FileType::Directory, "..".to_string())];
 
         // Root dir
@@ -132,7 +269,7 @@ impl Filesystem for KVFS {
                 .map(|(_, v)| (v.0, v.1, v.3.clone()))
                 .collect::<Vec<ReadDirEntry>>(),
             // /kv
-            2048 => match self.get_kv_direntries() {
+            4096 => match self.get_kv_direntries() {
                 Ok(v) => v,
                 Err(e) => {
                     log::error!("Error listing root directory: {}", e);
@@ -243,7 +380,26 @@ impl KVFS {
     }
 
     fn get_kv_direntries(&mut self) -> Result<Vec<ReadDirEntry>, Box<dyn error::Error>> {
-        Ok(vec![])
+        // TODO figure out how to work with cluster mode
+        let mut conn = self.pool.clone().unwrap().get()?;
+        let iter: redis::Iter<String> =
+            redis::cmd("SCAN").cursor_arg(0).clone().iter(&mut *conn)?;
+        let mut entries: Vec<ReadDirEntry> = vec![];
+        let mut ino_cache = INO_CACHE.write()?;
+        for (i, key) in iter.enumerate() {
+            if self.config.max_results == -1 || self.config.max_results > i as i64 {
+                let key_str = key.to_string();
+                let ino = seahash::hash(key_str.as_bytes()) % (KV_END - KV_START) + KV_START;
+                // TODO support hsets by setting them to Directory
+                // TODO define a lua function that does the scan and returns the
+                // key type and size along with it.
+                entries.push((ino, FileType::RegularFile, key_str.clone()));
+                ino_cache.put(ino, key_str.clone());
+            } else {
+                break;
+            }
+        }
+        Ok(entries)
     }
 
     fn get_attr(&mut self, path: &str, kind: FileType, ino: u64, size: u64) -> FileAttr {
