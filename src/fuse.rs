@@ -27,6 +27,16 @@ const RAW_HELP: &str = "Send raw commands to Redis.
 TODO fill this in with how to use /raw
 ";
 
+const LOCK_HELP: &str = "Atomic locks via files.
+
+TODO fill this in with how to use /lock
+";
+
+const KV_HELP: &str = "Key/Value store via files.
+
+TODO fill this in with how to use /kv
+";
+
 // ino, type, attr, name, content
 type DirEntry = (u64, FileType, FileAttr, String, Option<String>);
 
@@ -160,7 +170,7 @@ impl KVFS {
             ));
             root_entries.push((
                 2,
-                FileType::Directory,
+                FileType::RegularFile,
                 self.get_attr("/raw", FileType::RegularFile, 2, 0),
                 "raw".to_string(),
                 None,
@@ -173,8 +183,49 @@ impl KVFS {
                 Some(RAW_HELP.to_string()),
             ));
         }
-        // (2, FileType::Directory, None, "lock".to_string()),
-        // (2, FileType::Directory, None, "kv".to_string()),
+
+        log::debug!("Setting up /lock.");
+        root_entries.push((
+            2048,
+            FileType::Directory,
+            self.get_attr("/lock", FileType::Directory, 2048, 0),
+            "lock".to_string(),
+            None,
+        ));
+        root_entries.push((
+            2049,
+            FileType::RegularFile,
+            self.get_attr(
+                "/lock:help",
+                FileType::RegularFile,
+                2049,
+                LOCK_HELP.len() as u64,
+            ),
+            "lock:help".to_string(),
+            Some(LOCK_HELP.to_string()),
+        ));
+
+        log::debug!("Setting up /kv.");
+        root_entries.push((
+            2048,
+            FileType::Directory,
+            self.get_attr("/kv", FileType::Directory, 2048, 0),
+            "kv".to_string(),
+            None,
+        ));
+        root_entries.push((
+            2049,
+            FileType::RegularFile,
+            self.get_attr(
+                "/kv:help",
+                FileType::RegularFile,
+                2049,
+                KV_HELP.len() as u64,
+            ),
+            "kv:help".to_string(),
+            Some(KV_HELP.to_string()),
+        ));
+
         self.direntries_by_parent_ino.insert(
             1,
             root_entries
