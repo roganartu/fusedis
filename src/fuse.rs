@@ -12,14 +12,23 @@ use std::time::{Duration, SystemTime};
 
 const TTL: Duration = Duration::from_secs(1); // 1 second
 
-const HELLO_TXT_CONTENT: &str = "Hello World!\n";
+// /raw
+const RAW_START: u64 = 2;
+const RAW_END: u64 = 8191;
+// /lock/<name>
+const LOCK_START: u64 = 8192;
+const LOCK_END: u64 = 100_000_000_000;
+// /kv/<name>
+const KV_START: u64 = 200_000_000_000;
+const KV_END: u64 = 300_000_000_000;
 
-const RAW_HELP: &str = "
-Send raw commands to Redis.
+const RAW_HELP: &str = "Send raw commands to Redis.
+
+TODO fill this in with how to use /raw
 ";
 
-// ino, type, attr, name
-type DirEntry = (u64, FileType, FileAttr, String);
+// ino, type, attr, name, content
+type DirEntry = (u64, FileType, FileAttr, String, Option<String>);
 
 #[derive(Debug, Clone)]
 pub struct KVFS {
@@ -27,7 +36,7 @@ pub struct KVFS {
     // TODO these both impl r2d2::ManageConnection, surely we don't need two attrs?
     pub pool: Option<r2d2::Pool<RedisConnectionManager>>,
     pub cluster_pool: Option<r2d2::Pool<RedisClusterConnectionManager>>,
-    pub direntries_by_group: HashMap<String, Vec<DirEntry>>,
+    pub direntries_by_ino: HashMap<u64, DirEntry>,
     pub direntries_by_parent_ino: HashMap<u64, HashMap<String, DirEntry>>,
 }
 
@@ -41,6 +50,7 @@ impl Filesystem for KVFS {
             }
         };
 
+        // FUSE root
         if parent == 1 {
             match self.direntries_by_parent_ino.get(&parent) {
                 Some(entries) => match entries.get(&name_str) {
@@ -49,6 +59,7 @@ impl Filesystem for KVFS {
                 },
                 None => reply.error(ENOENT),
             };
+        // TODO add ranges for /lock and /kv here
         } else {
             reply.error(ENOENT);
         }
@@ -56,29 +67,11 @@ impl Filesystem for KVFS {
 
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
         match ino {
-            1 => reply.attr(&TTL, &self.direntries_by_group.get("root").unwrap()[0].2),
-            // TODO match on some bitwise range that maps to either /raw, /raw:transaction, or
-            // /raw:help
-            2 => reply.attr(
-                &TTL,
-                &self
-                    .direntries_by_parent_ino
-                    .get(&1)
-                    .unwrap()
-                    .get("/raw")
-                    .unwrap()
-                    .2,
-            ),
-            3 => reply.attr(
-                &TTL,
-                &self
-                    .direntries_by_parent_ino
-                    .get(&1)
-                    .unwrap()
-                    .get("/raw:help")
-                    .unwrap()
-                    .2,
-            ),
+            0..=RAW_END => match self.direntries_by_ino.get(&ino) {
+                Some(v) => reply.attr(&TTL, &v.2),
+                None => reply.error(ENOENT),
+            },
+            // TODO add ranges for /lock and /kv here
             _ => reply.error(ENOENT),
         };
     }
@@ -94,11 +87,18 @@ impl Filesystem for KVFS {
         _lock: Option<u64>,
         reply: ReplyData,
     ) {
-        if ino == 2 {
-            reply.data(&HELLO_TXT_CONTENT.as_bytes()[offset as usize..]);
-        } else {
-            reply.error(ENOENT);
-        }
+        match ino {
+            // FUSE internal range
+            0..=RAW_END => match self.direntries_by_ino.get(&ino) {
+                Some(v) => match &v.4 {
+                    Some(content) => reply.data(&content.as_bytes()[offset as usize..]),
+                    None => reply.error(ENOENT),
+                },
+                None => reply.error(ENOENT),
+            },
+            // TODO add ranges for /lock and /kv
+            _ => reply.error(ENOENT),
+        };
     }
 
     fn readdir(
@@ -115,8 +115,7 @@ impl Filesystem for KVFS {
         // Root dir
         entries.extend(match ino {
             // Root dir
-            // TODO exapand this to cover the whole /raw range
-            1 => self.direntries_by_parent_ino[&ino]
+            0..=RAW_END => self.direntries_by_parent_ino[&ino]
                 .iter()
                 .map(|(_, v)| (v.0, v.1, v.3.clone())),
             // 1 => match self.get_root_direntries() {
@@ -157,24 +156,25 @@ impl KVFS {
                 FileType::Directory,
                 self.get_attr(".", FileType::Directory, 1, 0),
                 ".".to_string(),
+                None,
             ));
             root_entries.push((
                 2,
                 FileType::Directory,
-                self.get_attr("/raw", FileType::Directory, 2, 0),
+                self.get_attr("/raw", FileType::RegularFile, 2, 0),
                 "raw".to_string(),
+                None,
             ));
             root_entries.push((
                 3,
                 FileType::RegularFile,
                 self.get_attr("/raw:help", FileType::RegularFile, 3, RAW_HELP.len() as u64),
                 "raw:help".to_string(),
+                Some(RAW_HELP.to_string()),
             ));
         }
         // (2, FileType::Directory, None, "lock".to_string()),
         // (2, FileType::Directory, None, "kv".to_string()),
-        self.direntries_by_group
-            .insert("root".to_string(), root_entries.clone());
         self.direntries_by_parent_ino.insert(
             1,
             root_entries
@@ -182,6 +182,9 @@ impl KVFS {
                 .map(|e| (e.3.clone(), e.clone()))
                 .collect(),
         );
+        for e in root_entries {
+            self.direntries_by_ino.insert(e.0, e.clone());
+        }
     }
 
     fn get_attr(&mut self, path: &str, kind: FileType, ino: u64, size: u64) -> FileAttr {

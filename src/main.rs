@@ -144,7 +144,7 @@ fn run_app() -> CLIResult<()> {
         config: config.clone(),
         pool: None,
         cluster_pool: None,
-        direntries_by_group: HashMap::new(),
+        direntries_by_ino: HashMap::new(),
         direntries_by_parent_ino: HashMap::new(),
     };
 
