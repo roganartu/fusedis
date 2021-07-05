@@ -40,6 +40,9 @@ TODO fill this in with how to use /kv
 // ino, type, attr, name, content
 type DirEntry = (u64, FileType, FileAttr, String, Option<String>);
 
+// ino, type, name
+type ReadDirEntry = (u64, FileType, String);
+
 #[derive(Debug, Clone)]
 pub struct KVFS {
     pub config: Config,
@@ -119,23 +122,24 @@ impl Filesystem for KVFS {
         offset: i64,
         mut reply: ReplyDirectory,
     ) {
-        let mut entries: Vec<(u64, FileType, String)> =
-            vec![(1, FileType::Directory, "..".to_string())];
+        let mut entries: Vec<ReadDirEntry> = vec![(1, FileType::Directory, "..".to_string())];
 
         // Root dir
         entries.extend(match ino {
             // Root dir
-            0..=RAW_END => self.direntries_by_parent_ino[&ino]
+            1 => self.direntries_by_parent_ino[&ino]
                 .iter()
-                .map(|(_, v)| (v.0, v.1, v.3.clone())),
-            // 1 => match self.get_root_direntries() {
-            //     Ok(v) => v,
-            //     Err(e) => {
-            //         log::error!("Error listing root directory: {}", e);
-            //         reply.error(EAGAIN);
-            //         return;
-            //     }
-            // },
+                .map(|(_, v)| (v.0, v.1, v.3.clone()))
+                .collect::<Vec<ReadDirEntry>>(),
+            // /kv
+            2048 => match self.get_kv_direntries() {
+                Ok(v) => v,
+                Err(e) => {
+                    log::error!("Error listing root directory: {}", e);
+                    reply.error(EAGAIN);
+                    return;
+                }
+            },
             _ => {
                 reply.error(ENOENT);
                 return;
@@ -207,19 +211,19 @@ impl KVFS {
 
         log::debug!("Setting up /kv.");
         root_entries.push((
-            2048,
+            4096,
             FileType::Directory,
-            self.get_attr("/kv", FileType::Directory, 2048, 0),
+            self.get_attr("/kv", FileType::Directory, 4096, 0),
             "kv".to_string(),
             None,
         ));
         root_entries.push((
-            2049,
+            4097,
             FileType::RegularFile,
             self.get_attr(
                 "/kv:help",
                 FileType::RegularFile,
-                2049,
+                4097,
                 KV_HELP.len() as u64,
             ),
             "kv:help".to_string(),
@@ -236,6 +240,10 @@ impl KVFS {
         for e in root_entries {
             self.direntries_by_ino.insert(e.0, e.clone());
         }
+    }
+
+    fn get_kv_direntries(&mut self) -> Result<Vec<ReadDirEntry>, Box<dyn error::Error>> {
+        Ok(vec![])
     }
 
     fn get_attr(&mut self, path: &str, kind: FileType, ino: u64, size: u64) -> FileAttr {
