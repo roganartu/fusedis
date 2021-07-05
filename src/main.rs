@@ -76,7 +76,7 @@ struct Opt {
     #[structopt(short, long)]
     group: Option<String>,
 
-    /// Permissions to give all paths under mount. Must be octal. Use config file for finer-grained, path-based control [default: 644]
+    /// Permissions to give all paths under mount. Must be octal. Use config file for finer-grained, path-based control [default: 755]
     #[structopt(long, parse(try_from_str = config::parse_octal))]
     chmod: Option<u16>,
 
@@ -269,7 +269,7 @@ fn merge_config(opt: Opt) -> Result<config::Config, config::ConfigError> {
             Some(optval) => optval,
             None => match cfgfile.chmod {
                 Some(cfgval) => cfgval,
-                None => 0o644,
+                None => 0o755,
             },
         },
         max_results: match opt.max_results {

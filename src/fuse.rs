@@ -8,47 +8,15 @@ use r2d2_redis_cluster::{r2d2, RedisClusterConnectionManager};
 use std::collections::HashMap;
 use std::error;
 use std::ffi::OsStr;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
 const TTL: Duration = Duration::from_secs(1); // 1 second
 
-const HELLO_DIR_ATTR: FileAttr = FileAttr {
-    ino: 1,
-    size: 0,
-    blocks: 0,
-    atime: UNIX_EPOCH, // 1970-01-01 00:00:00
-    mtime: UNIX_EPOCH,
-    ctime: UNIX_EPOCH,
-    crtime: UNIX_EPOCH,
-    kind: FileType::Directory,
-    perm: 0o755,
-    nlink: 2,
-    uid: 501,
-    gid: 20,
-    rdev: 0,
-    flags: 0,
-    blksize: 512,
-};
-
 const HELLO_TXT_CONTENT: &str = "Hello World!\n";
 
-const HELLO_TXT_ATTR: FileAttr = FileAttr {
-    ino: 2,
-    size: 13,
-    blocks: 1,
-    atime: UNIX_EPOCH, // 1970-01-01 00:00:00
-    mtime: UNIX_EPOCH,
-    ctime: UNIX_EPOCH,
-    crtime: UNIX_EPOCH,
-    kind: FileType::RegularFile,
-    perm: 0o644,
-    nlink: 1,
-    uid: 501,
-    gid: 20,
-    rdev: 0,
-    flags: 0,
-    blksize: 512,
-};
+const RAW_HELP: &str = "
+Send raw commands to Redis.
+";
 
 // ino, type, attr, name
 type DirEntry = (u64, FileType, FileAttr, String);
@@ -88,10 +56,31 @@ impl Filesystem for KVFS {
 
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
         match ino {
-            1 => reply.attr(&TTL, &HELLO_DIR_ATTR),
-            2 => reply.attr(&TTL, &HELLO_TXT_ATTR),
+            1 => reply.attr(&TTL, &self.direntries_by_group.get("root").unwrap()[0].2),
+            // TODO match on some bitwise range that maps to either /raw, /raw:transaction, or
+            // /raw:help
+            2 => reply.attr(
+                &TTL,
+                &self
+                    .direntries_by_parent_ino
+                    .get(&1)
+                    .unwrap()
+                    .get("/raw")
+                    .unwrap()
+                    .2,
+            ),
+            3 => reply.attr(
+                &TTL,
+                &self
+                    .direntries_by_parent_ino
+                    .get(&1)
+                    .unwrap()
+                    .get("/raw:help")
+                    .unwrap()
+                    .2,
+            ),
             _ => reply.error(ENOENT),
-        }
+        };
     }
 
     fn read(
@@ -120,15 +109,14 @@ impl Filesystem for KVFS {
         offset: i64,
         mut reply: ReplyDirectory,
     ) {
-        let mut entries: Vec<(u64, FileType, String)> = vec![
-            (1, FileType::Directory, ".".to_string()),
-            (1, FileType::Directory, "..".to_string()),
-        ];
+        let mut entries: Vec<(u64, FileType, String)> =
+            vec![(1, FileType::Directory, "..".to_string())];
 
         // Root dir
         entries.extend(match ino {
             // Root dir
-            1..=2 => self.direntries_by_parent_ino[&ino]
+            // TODO exapand this to cover the whole /raw range
+            1 => self.direntries_by_parent_ino[&ino]
                 .iter()
                 .map(|(_, v)| (v.0, v.1, v.3.clone())),
             // 1 => match self.get_root_direntries() {
@@ -165,11 +153,23 @@ impl KVFS {
         if !self.config.disable_raw {
             log::debug!("Setting up /raw, to disable set disable_raw=true.");
             root_entries.push((
+                1,
+                FileType::Directory,
+                self.get_attr(".", FileType::Directory, 1, 0),
+                ".".to_string(),
+            ));
+            root_entries.push((
                 2,
                 FileType::Directory,
-                self.get_dir_attr("/raw", 2),
+                self.get_attr("/raw", FileType::Directory, 2, 0),
                 "raw".to_string(),
-            ))
+            ));
+            root_entries.push((
+                3,
+                FileType::RegularFile,
+                self.get_attr("/raw:help", FileType::RegularFile, 3, RAW_HELP.len() as u64),
+                "raw:help".to_string(),
+            ));
         }
         // (2, FileType::Directory, None, "lock".to_string()),
         // (2, FileType::Directory, None, "kv".to_string()),
@@ -184,18 +184,18 @@ impl KVFS {
         );
     }
 
-    fn get_dir_attr(&mut self, path: &str, ino: u64) -> FileAttr {
+    fn get_attr(&mut self, path: &str, kind: FileType, ino: u64, size: u64) -> FileAttr {
         // TODO implement permissions adjustments from config.
         let now = SystemTime::now();
         FileAttr {
             ino: ino,
-            size: 0,
+            size: size,
             blocks: 0,
             atime: now,
             mtime: now,
             ctime: now,
             crtime: now,
-            kind: FileType::Directory,
+            kind: kind,
             perm: self.config.chmod,
             nlink: 1,
             uid: self.config.uid,
