@@ -67,6 +67,21 @@ macro_rules! get_conn_eagain {
     };
 }
 
+macro_rules! get_ino_cache {
+    ($reply:expr, $msg:expr, $($arg:tt)*) => {
+        match INO_CACHE.write() {
+            Ok(cache) => cache,
+            Err(e) => {
+                // TODO not sure what syntax I need to get e in the same message...
+                log::error!($msg, $($arg)*);
+                log::error!("{}", e);
+                $reply.error(EAGAIN);
+                return;
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct KVFS {
     pub config: Config,
@@ -127,18 +142,11 @@ impl Filesystem for KVFS {
                 // We add a \n at the end
                 (value.len() + 1) as u64,
             );
-            let mut ino_cache = match INO_CACHE.write() {
-                Ok(cache) => cache,
-                Err(e) => {
-                    log::error!(
-                        "Failed to acquire write lock on inode cache in getattr for inode {}: {}",
-                        ino,
-                        e
-                    );
-                    reply.error(EAGAIN);
-                    return;
-                }
-            };
+            let mut ino_cache = get_ino_cache!(
+                reply,
+                "Failed to acquire write lock on inode cache in getattr for inode {}",
+                ino,
+            );
             ino_cache.put(ino, name_str.clone());
             // We add a \n at the end
             reply.entry(&TTL, &attr, (value.len() + 1) as u64);
@@ -156,14 +164,11 @@ impl Filesystem for KVFS {
                 None => reply.error(ENOENT),
             },
             KV_START..=KV_END => {
-                let mut ino_cache = match INO_CACHE.write() {
-                    Ok(cache) => cache,
-                    Err(e) => {
-                        log::error!("Failed to acquire write lock on inode cache in getattr for inode {}: {}", ino, e);
-                        reply.error(EAGAIN);
-                        return;
-                    }
-                };
+                let mut ino_cache = get_ino_cache!(
+                    reply,
+                    "Failed to acquire write lock on inode cache in getattr for inode {}",
+                    ino,
+                );
                 // TODO construct nested dirs, somehow?
                 println!("{:?}", ino_cache.get(&ino));
                 // TODO if not in cache, fetch everything and find it via hash?
@@ -191,19 +196,12 @@ impl Filesystem for KVFS {
             offset,
             fh,
         );
-        let mut ino_cache = match INO_CACHE.write() {
-            Ok(cache) => cache,
-            Err(e) => {
-                log::error!(
-                    "Failed to acquire write lock on inode cache in read for inode {} on filehandle {}: {}",
-                    ino,
-                    fh,
-                    e,
-                );
-                reply.error(EAGAIN);
-                return;
-            }
-        };
+        let mut ino_cache = get_ino_cache!(
+            reply,
+            "Failed to acquire write lock on inode cache in read for inode {} on filehandle {}",
+            ino,
+            fh,
+        );
         match ino {
             // FUSE internal range
             0..=RAW_END => match self.direntries_by_ino.get(&ino) {
