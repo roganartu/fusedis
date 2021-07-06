@@ -79,7 +79,32 @@ macro_rules! get_ino_cache {
                 return;
             }
         }
-    }
+    };
+}
+
+macro_rules! with_enoent {
+    ($reply:expr, $value:expr) => {
+        match $value {
+            Some(v) => v,
+            None => {
+                $reply.error(ENOENT);
+                return;
+            }
+        }
+    };
+}
+
+macro_rules! redis_cmd {
+    ($reply:expr, $con:expr, $cmd:expr, $($arg:expr)*) => {
+        match redis::cmd($cmd)$(.arg($arg))*.query(&mut *$con) {
+            Ok(v) => v,
+            Err(e) => {
+                log::debug!("Error querying redis: {}", e);
+                $reply.error(EAGAIN);
+                return;
+            }
+        }
+    };
 }
 
 #[derive(Debug, Clone)]
@@ -119,20 +144,7 @@ impl Filesystem for KVFS {
             let mut conn = get_conn_eagain!(self.pool, reply);
             // TODO not sure if this is the best idea, it reads the whole value into
             // memory which might cause problems with large values.
-            let value: String = match redis::cmd("GET").arg(&name_str).query(&mut *conn) {
-                Ok(v) => match v {
-                    Some(a) => a,
-                    None => {
-                        reply.error(ENOENT);
-                        return;
-                    }
-                },
-                Err(e) => {
-                    log::debug!("Error querying redis: {}", e);
-                    reply.error(EAGAIN);
-                    return;
-                }
-            };
+            let value: String = with_enoent!(reply, redis_cmd!(reply, conn, "GET", &name_str));
             // TODO support nested dirs for eg hsets
             let ino = seahash::hash(name_str.as_bytes()) % (KV_END - KV_START) + KV_START;
             let attr = self.get_attr(
@@ -215,25 +227,7 @@ impl Filesystem for KVFS {
                 Some(name) => {
                     // TODO make this a macro
                     let mut conn = get_conn_eagain!(self.pool, reply);
-                    // TODO make this a macro.
-                    // Maybe two macros? One for running the command with EAGAIN on failure,
-                    // and another for unwrapping None into ENOENT?
-                    // Then use like this:
-                    //     let value: String = with_enoent!(redis_cmd!(String, &mut *conn, "GET", &name_str))
-                    let value: String = match redis::cmd("GET").arg(name).query(&mut *conn) {
-                        Ok(v) => match v {
-                            Some(a) => a,
-                            None => {
-                                reply.error(ENOENT);
-                                return;
-                            }
-                        },
-                        Err(e) => {
-                            log::debug!("Error querying redis: {}", e);
-                            reply.error(EAGAIN);
-                            return;
-                        }
-                    };
+                    let value: String = with_enoent!(reply, redis_cmd!(reply, conn, "GET", name));
                     reply.data(&format!("{}\n", value).as_bytes()[offset as usize..]);
                 }
                 None => {
