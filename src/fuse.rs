@@ -107,6 +107,18 @@ macro_rules! redis_cmd {
     };
 }
 
+macro_rules! curdir {
+    ($self:expr, $ino:expr) => {
+        (
+            $ino,
+            FileType::Directory,
+            $self.get_attr(".", FileType::Directory, $ino, 0),
+            ".".to_string(),
+            None,
+        );
+    };
+}
+
 #[derive(Debug, Clone)]
 pub struct KVFS {
     pub config: Config,
@@ -250,7 +262,13 @@ impl Filesystem for KVFS {
         mut reply: ReplyDirectory,
     ) {
         log::debug!("readdir for inode {} via filehandle {}", ino, fh);
+        let cur_dir: DirEntry = curdir!(self, ino);
         let mut entries: Vec<ReadDirEntry> = vec![(1, FileType::Directory, "..".to_string())];
+        // We have to always include the root dir at inode 1, if we push it
+        // unconditionally we end up with duplicated `.` entries.
+        if ino != 1 {
+            entries.push((cur_dir.0, cur_dir.1, cur_dir.3));
+        }
 
         // Root dir
         entries.extend(match ino {
@@ -293,13 +311,7 @@ impl KVFS {
         let mut root_entries: Vec<DirEntry> = vec![];
         if !self.config.disable_raw {
             log::debug!("Setting up /raw, to disable set disable_raw=true.");
-            root_entries.push((
-                1,
-                FileType::Directory,
-                self.get_attr(".", FileType::Directory, 1, 0),
-                ".".to_string(),
-                None,
-            ));
+            root_entries.push(curdir!(self, 1));
             root_entries.push((
                 2,
                 FileType::RegularFile,
