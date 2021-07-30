@@ -1,9 +1,9 @@
 mod config;
+mod drivers;
 mod fuse;
 
 #[macro_use]
 extern crate quick_error;
-extern crate lazy_static;
 extern crate log;
 extern crate toml;
 extern crate url;
@@ -11,9 +11,7 @@ extern crate url;
 use env_logger::Env;
 use fuser::MountOption;
 use human_panic::setup_panic;
-use r2d2_redis::{r2d2, RedisConnectionManager};
-use r2d2_redis_cluster::RedisClusterConnectionManager;
-use std::collections::HashMap;
+use redis;
 use std::error;
 use std::path::PathBuf;
 use std::process;
@@ -141,53 +139,27 @@ fn run_app() -> CLIResult<()> {
         fuse_options.push(MountOption::RW);
     }
 
-    let mut kvfs = fuse::KVFS {
-        config: config.clone(),
-        pool: None,
-        cluster_pool: None,
-        direntries_by_ino: HashMap::new(),
-        direntries_by_parent_ino: HashMap::new(),
-    };
-
-    // Connect to redis
-    let redis_urls: Vec<String> = config.server.iter().map(|u| u.to_string()).collect();
-    if config.cluster_mode {
-        log::debug!(
-            "Attempting to connect to redis URLs in cluster mode {:?}.",
-            redis_urls
-        );
-        let redis_conn_manager = match RedisClusterConnectionManager::new(
-            redis_urls.iter().map(|s| s.as_str()).collect(),
-        ) {
-            Ok(v) => v,
-            Err(e) => return Err(Box::new(e)),
-        };
-        kvfs.cluster_pool = match r2d2::Pool::builder().build(redis_conn_manager) {
-            Ok(v) => Some(v),
-            Err(e) => return Err(Box::new(e)),
-        };
-    } else {
-        if redis_urls.len() > 1 {
-            return Err(Box::new(config::ConfigError::MultipleServersNotClustered));
+    // TODO how to support multiple drivers here? Do we need a function that returns
+    // an Option and then we can match->err on that?
+    let mut driver = drivers::redis::RedisDriver::new(match config.redis {
+        Some(url) => {
+            log::debug!("Attempting to connect to redis URL {}.", url);
+            match redis::Client::open(url.to_string()) {
+                Ok(v) => v,
+                Err(e) => return Err(Box::new(e)),
+            }
         }
-        let redis_url = redis_urls[0].clone();
-        log::debug!("Attempting to connect to redis URL {}.", redis_url);
-        let redis_conn_manager = match RedisConnectionManager::new(redis_url) {
-            Ok(v) => v,
-            Err(e) => return Err(Box::new(e)),
-        };
-        kvfs.pool = match r2d2::Pool::builder().build(redis_conn_manager) {
-            Ok(v) => Some(v),
-            Err(e) => return Err(Box::new(e)),
-        };
-    }
+        None => return Err(Box::new(config::ConfigError::NoDriver)),
+    });
+
+    let mut kvfs = fuse::KVFS::new(config.clone(), driver);
 
     log::debug!("Building directory structure.");
     kvfs.init_static_dirs();
 
     // Mount the filestystem
     log::info!("Mounting fusekv at {}.", mountpoint.display());
-    match fuser::mount2(kvfs.clone(), mountpoint, &fuse_options) {
+    match fuser::mount2(kvfs, mountpoint, &fuse_options) {
         Ok(v) => Ok(v),
         Err(e) => Err(Box::new(e)),
     }
@@ -212,13 +184,13 @@ fn merge_config(opt: Opt) -> Result<config::Config, config::ConfigError> {
                 Some(cfgval) => cfgval,
                 None => false,
             },
-        server: match opt.server {
-            Some(optval) => vec![config::RedisServer { url: optval }],
-            None => match cfgfile.server {
-                Some(cfgval) => cfgval,
-                None => vec![config::RedisServer {
+        redis: match opt.server {
+            Some(optval) => Some(config::RedisServer { url: optval }),
+            None => match cfgfile.redis {
+                Some(cfgval) => Some(cfgval),
+                None => Some(config::RedisServer {
                     url: url::Url::parse("redis://127.0.0.1:6379").unwrap(),
-                }],
+                }),
             },
         },
         permission: match cfgfile.permission {

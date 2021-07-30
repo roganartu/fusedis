@@ -2,16 +2,12 @@ use crate::config::Config;
 use fuser::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry, Request,
 };
-use lazy_static::lazy_static;
 use libc::{EAGAIN, ENOENT};
-use lru::LruCache;
-use r2d2_redis::RedisConnectionManager;
-use r2d2_redis_cluster::{r2d2, RedisClusterConnectionManager};
 use seahash;
 use std::collections::HashMap;
 use std::error;
+use std::error::Error;
 use std::ffi::OsStr;
-use std::sync::RwLock;
 use std::time::{Duration, SystemTime};
 
 const TTL: Duration = Duration::from_secs(1); // 1 second
@@ -43,44 +39,11 @@ const KV_HELP: &str = "Key/Value store via files.
 TODO fill this in with how to use /kv
 ";
 
-// TODO make this size configurable? is that possible?
-lazy_static! {
-    static ref INO_CACHE: RwLock<LruCache<u64, String>> = RwLock::new(LruCache::new(1_000_000));
-}
-
 // ino, type, attr, name, content
 type DirEntry = (u64, FileType, FileAttr, String, Option<String>);
 
 // ino, type, name
 type ReadDirEntry = (u64, FileType, String);
-
-macro_rules! get_conn_eagain {
-    ($pool:expr, $reply:expr) => {
-        match $pool.clone().unwrap().get() {
-            Ok(c) => c,
-            Err(e) => {
-                log::debug!("Error getting pool connection: {}", e);
-                $reply.error(EAGAIN);
-                return;
-            }
-        }
-    };
-}
-
-macro_rules! get_ino_cache {
-    ($reply:expr, $msg:expr, $($arg:tt)*) => {
-        match INO_CACHE.write() {
-            Ok(cache) => cache,
-            Err(e) => {
-                // TODO not sure what syntax I need to get e in the same message...
-                log::error!($msg, $($arg)*);
-                log::error!("{}", e);
-                $reply.error(EAGAIN);
-                return;
-            }
-        }
-    };
-}
 
 macro_rules! with_enoent {
     ($reply:expr, $value:expr) => {
@@ -88,19 +51,6 @@ macro_rules! with_enoent {
             Some(v) => v,
             None => {
                 $reply.error(ENOENT);
-                return;
-            }
-        }
-    };
-}
-
-macro_rules! redis_cmd {
-    ($reply:expr, $con:expr, $cmd:expr, $($arg:expr)*) => {
-        match redis::cmd($cmd)$(.arg($arg))*.query(&mut *$con) {
-            Ok(v) => v,
-            Err(e) => {
-                log::debug!("Error querying redis: {}", e);
-                $reply.error(EAGAIN);
                 return;
             }
         }
@@ -120,13 +70,55 @@ macro_rules! curdir {
 }
 
 #[derive(Debug, Clone)]
+pub struct KVEntry {
+    pub ino: u64,
+    pub key: String,
+    pub val: String,
+}
+
+impl KVEntry {
+    pub fn new(ino: u64, key: String, val: String) -> KVEntry {
+        KVEntry {
+            ino: ino,
+            key: key,
+            val: val,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.val.len()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct KVRef {
+    pub ino: u64,
+    pub key: String,
+}
+
+pub trait KVReader {
+    fn get_by_name(&self, name: String, ino: u64) -> Result<Option<KVEntry>, Box<dyn Error>>;
+    fn get_by_ino(&self, ino: u64) -> Result<Option<KVEntry>, Box<dyn Error>>;
+    fn list_keys(&self, offset: i64) -> Result<Vec<KVRef>, Box<dyn Error>>;
+    fn read(&self, ino: u64, fh: u64, offset: i64) -> Result<Vec<u8>, Box<dyn Error>>;
+}
+
 pub struct KVFS {
-    pub config: Config,
-    // TODO these both impl r2d2::ManageConnection, surely we don't need two attrs?
-    pub pool: Option<r2d2::Pool<RedisConnectionManager>>,
-    pub cluster_pool: Option<r2d2::Pool<RedisClusterConnectionManager>>,
-    pub direntries_by_ino: HashMap<u64, DirEntry>,
-    pub direntries_by_parent_ino: HashMap<u64, HashMap<String, DirEntry>>,
+    config: Config,
+    driver: Box<dyn KVReader>,
+    direntries_by_ino: HashMap<u64, DirEntry>,
+    direntries_by_parent_ino: HashMap<u64, HashMap<String, DirEntry>>,
+}
+
+impl KVFS {
+    pub fn new(config: Config, reader: impl KVReader + 'static) -> KVFS {
+        KVFS {
+            config: config,
+            driver: Box::new(reader),
+            direntries_by_ino: HashMap::new(),
+            direntries_by_parent_ino: HashMap::new(),
+        }
+    }
 }
 
 impl Filesystem for KVFS {
@@ -152,27 +144,32 @@ impl Filesystem for KVFS {
             };
         // /kv
         } else if parent == 4096 {
-            // We have a name, so we can just look directly into redis
-            let mut conn = get_conn_eagain!(self.pool, reply);
-            // TODO not sure if this is the best idea, it reads the whole value into
-            // memory which might cause problems with large values.
-            let value: String = with_enoent!(reply, redis_cmd!(reply, conn, "GET", &name_str));
-            // TODO support nested dirs for eg hsets
+            // Fetch from driver
             let ino = seahash::hash(name_str.as_bytes()) % (KV_END - KV_START) + KV_START;
+            let value: KVEntry = match self.driver.get_by_name(name_str, ino) {
+                Ok(maybe) => match maybe {
+                    Some(v) => v,
+                    None => {
+                        reply.error(ENOENT);
+                        return;
+                    }
+                },
+                Err(_) => {
+                    reply.error(EAGAIN);
+                    return;
+                }
+            };
             let attr = self.get_attr(
                 format!("/kv/{}", &name_str).as_str(),
                 FileType::RegularFile,
                 ino,
                 // We add a \n at the end
+                // TODO add a config option for this?
                 (value.len() + 1) as u64,
             );
-            let mut ino_cache = get_ino_cache!(
-                reply,
-                "Failed to acquire write lock on inode cache in getattr for inode {}",
-                ino,
-            );
-            ino_cache.put(ino, name_str.clone());
+
             // We add a \n at the end
+            // TODO add a config option for this?
             reply.entry(&TTL, &attr, (value.len() + 1) as u64);
         // TODO add ranges for /lock and /kv here
         } else {

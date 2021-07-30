@@ -9,7 +9,7 @@ use validator::Validate;
 #[derive(Debug, Validate, Deserialize, Default)]
 pub struct ConfigFile {
     pub cluster_mode: Option<bool>,
-    pub server: Option<Vec<RedisServer>>,
+    pub redis: Option<RedisServer>,
     pub permission: Option<Vec<PathPermission>>,
     pub disable_raw: Option<bool>,
     pub read_only: Option<bool>,
@@ -29,7 +29,7 @@ pub struct ConfigFile {
 #[derive(Debug, Validate, Default, Clone)]
 pub struct Config {
     pub cluster_mode: bool,
-    pub server: Vec<RedisServer>,
+    pub redis: Option<RedisServer>,
     pub permission: Vec<PathPermission>,
     pub disable_raw: bool,
     pub read_only: bool,
@@ -90,14 +90,14 @@ quick_error! {
         Io(err: std::io::Error) {
             source(err)
         }
-        MultipleServersNotClustered {
-            display("Multiple Redis servers configured, but cluster mode not enabled.")
-        }
         UserNotFound {
             display("User not found.")
         }
         GroupNotFound {
             display("Group not found.")
+        }
+        NoDriver {
+            display("No driver provided in config file.")
         }
     }
 }

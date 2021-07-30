@@ -14,10 +14,8 @@ libc = "0.2"
 log = "0.4"
 env_logger = "0.8"
 human-panic = "1.0.3"
-redis = { version = "0.20.1", features = ["cluster", "tls", "r2d2"] }
+redis = { version = "0.21.0", features = ["tls"] }
 redis-lua = "0.4"
-r2d2_redis = "0.14.0"
-r2d2_redis_cluster = "0.1.6"
 toml = "0.5"
 url = { version = "2.2", features = ["serde"] }
 quick-error = "2.0"
@@ -27,4 +25,3 @@ whoami = "1.1"
 users = "0.11"
 seahash = "4.1"
 lru = "0.6"
-lazy_static = "1.4"
