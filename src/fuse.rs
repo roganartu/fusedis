@@ -146,7 +146,7 @@ impl Filesystem for KVFS {
         } else if parent == 4096 {
             // Fetch from driver
             let ino = seahash::hash(name_str.as_bytes()) % (KV_END - KV_START) + KV_START;
-            let value: KVEntry = match self.driver.get_by_name(name_str, ino) {
+            let entry: KVEntry = match self.driver.get_by_name(name_str, ino) {
                 Ok(maybe) => match maybe {
                     Some(v) => v,
                     None => {
@@ -165,12 +165,12 @@ impl Filesystem for KVFS {
                 ino,
                 // We add a \n at the end
                 // TODO add a config option for this?
-                (value.len() + 1) as u64,
+                (entry.len() + 1) as u64,
             );
 
             // We add a \n at the end
             // TODO add a config option for this?
-            reply.entry(&TTL, &attr, (value.len() + 1) as u64);
+            reply.entry(&TTL, &attr, (entry.len() + 1) as u64);
         // TODO add ranges for /lock and /kv here
         } else {
             reply.error(ENOENT);
@@ -185,15 +185,29 @@ impl Filesystem for KVFS {
                 None => reply.error(ENOENT),
             },
             KV_START..=KV_END => {
-                let mut ino_cache = get_ino_cache!(
-                    reply,
-                    "Failed to acquire write lock on inode cache in getattr for inode {}",
+                // Fetch attr from redis
+                let entry: KVEntry = match self.driver.get_by_ino(ino) {
+                    Ok(maybe) => match maybe {
+                        Some(v) => v,
+                        None => {
+                            reply.error(ENOENT);
+                            return;
+                        }
+                    },
+                    Err(_) => {
+                        reply.error(EAGAIN);
+                        return;
+                    }
+                };
+                let attr = self.get_attr(
+                    format!("/kv/{}", &entry.key).as_str(),
+                    FileType::RegularFile,
                     ino,
+                    // We add a \n at the end
+                    // TODO add a config option for this?
+                    (entry.len() + 1) as u64,
                 );
-                // TODO construct nested dirs, somehow?
-                println!("{:?}", ino_cache.get(&ino));
-                // TODO if not in cache, fetch everything and find it via hash?
-                reply.error(ENOENT);
+                reply.attr(&TTL, &attr);
             }
             // TODO add ranges for /lock and /kv here
             _ => reply.error(ENOENT),

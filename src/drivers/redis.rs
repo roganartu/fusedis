@@ -56,14 +56,17 @@ impl fuse::KVReader for RedisDriver {
         };
         Ok(Some(fuse::KVEntry::new(ino, name, value)))
     }
+
     fn get_by_ino(&self, ino: u64) -> Result<Option<fuse::KVEntry>, Box<dyn Error>> {
         // TODO impl
         Ok(None)
     }
+
     fn list_keys(&self, offset: i64) -> Result<Vec<fuse::KVRef>, Box<dyn Error>> {
         // TODO impl
         Ok(vec![])
     }
+
     fn read(&self, ino: u64, fh: u64, offset: i64) -> Result<Vec<u8>, Box<dyn Error>> {
         // TODO impl
         Ok(vec![])
