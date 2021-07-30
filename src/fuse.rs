@@ -45,18 +45,6 @@ type DirEntry = (u64, FileType, FileAttr, String, Option<String>);
 // ino, type, name
 type ReadDirEntry = (u64, FileType, String);
 
-macro_rules! with_enoent {
-    ($reply:expr, $value:expr) => {
-        match $value {
-            Some(v) => v,
-            None => {
-                $reply.error(ENOENT);
-                return;
-            }
-        }
-    };
-}
-
 macro_rules! curdir {
     ($self:expr, $ino:expr) => {
         (
@@ -100,7 +88,7 @@ pub trait KVReader {
     fn get_by_name(&self, name: String, ino: u64) -> Result<Option<KVEntry>, Box<dyn Error>>;
     fn get_by_ino(&self, ino: u64) -> Result<Option<KVEntry>, Box<dyn Error>>;
     fn list_keys(&self, offset: i64) -> Result<Vec<KVRef>, Box<dyn Error>>;
-    fn read(&self, ino: u64, fh: u64, offset: i64) -> Result<Vec<u8>, Box<dyn Error>>;
+    fn read(&self, ino: u64, fh: u64, offset: i64) -> Result<Option<Vec<u8>>, Box<dyn Error>>;
 }
 
 pub struct KVFS {
@@ -246,20 +234,24 @@ impl Filesystem for KVFS {
                 },
                 None => reply.error(ENOENT),
             },
-            KV_START..=KV_END => match ino_cache.get(&ino) {
-                Some(name) => {
-                    // TODO make this a macro
-                    let mut conn = get_conn_eagain!(self.pool, reply);
-                    let value: String = with_enoent!(reply, redis_cmd!(reply, conn, "GET", name));
-                    reply.data(&format!("{}\n", value).as_bytes()[offset as usize..]);
-                }
-                None => {
-                    // TODO lookup all keys and find this one by hash?
-                    reply.error(ENOENT);
-                    return;
-                }
-            },
-            // TODO add ranges for /lock and /kv
+            KV_START..=KV_END => {
+                let value: Vec<u8> = match self.driver.read(ino, fh, offset) {
+                    Ok(maybe) => match maybe {
+                        Some(v) => v,
+                        None => {
+                            // TODO lookup all keys and find this one by hash?
+                            reply.error(ENOENT);
+                            return;
+                        }
+                    },
+                    Err(_) => {
+                        reply.error(EAGAIN);
+                        return;
+                    }
+                };
+                reply.data(&format!("{}\n", String::from_utf8_lossy(&value)).as_bytes());
+            }
+            // TODO add ranges for /lock
             _ => reply.error(ENOENT),
         };
     }

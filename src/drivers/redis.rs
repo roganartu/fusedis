@@ -67,9 +67,14 @@ impl fuse::KVReader for RedisDriver {
         Ok(vec![])
     }
 
-    fn read(&self, ino: u64, fh: u64, offset: i64) -> Result<Vec<u8>, Box<dyn Error>> {
-        // TODO impl
-        Ok(vec![])
+    fn read(&self, ino: u64, fh: u64, offset: i64) -> Result<Option<Vec<u8>>, Box<dyn Error>> {
+        match self.get_by_ino(ino) {
+            Ok(maybe) => match maybe {
+                Some(v) => Ok(Some(v.val.as_bytes()[offset as usize..].to_vec())),
+                None => Ok(None),
+            },
+            Err(e) => return Err(e),
+        }
     }
 }
 
